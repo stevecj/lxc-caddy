@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+
+import os
+import yaml
+
+proc = os.popen('lxc profile show default')
+profile_data = yaml.safe_load(proc.read())
+print('root' in profile_data.get('devices', {}))

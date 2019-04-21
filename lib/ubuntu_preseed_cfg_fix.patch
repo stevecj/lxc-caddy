@@ -1,0 +1,4 @@
+75c75
+<  && /bin/bash /root/vboxpostinstall.sh --preseed-late-command
+---
+>  && /bin/sh /target/root/vboxpostinstall.sh --need-target-bash --preseed-late-command

@@ -1,0 +1,72 @@
+#!/bin/bash
+
+# username defaults to value of $USER unless set to non-blank here.
+username=
+
+# net_domain defaults to $username.local unless set to non-blank here.
+net_domain=
+
+# iso_images_dir defaults to $HOME/iso-images unless set to non-blank here.
+iso_images_dir=
+
+vm_ubuntu_version=18.10
+
+
+if [[ -z $username ]]; then username=$USER; fi
+
+if [[ -z $net_domain ]]; then net_domain=$username.local; fi
+
+if [[ -z $iso_images_dir ]]; then iso_images_dir=$HOME/iso-images; fi
+
+installer_iso_filename=ubuntu-$vm_ubuntu_version-server-amd64.iso
+md5sums_local_filename=ubuntu-server-$vm_ubuntu_version-MD5SUMS
+
+
+if ! macos_logical_cpu_count=$(hostinfo | grep processors | grep logical | grep -E -o '\d+'); then
+    echo "Failed to get host system's number of logical CPUs" 1>&2
+    exit 1
+fi
+
+
+if ! host_os_ram_gb=$(hostinfo | grep memory | grep -i primary | grep -i gigabytes | grep -E -o '\d+([.]\d+)?'); then
+    echo "Failed to get host system's memory size in gigabytes" 1>&2
+    exit 1
+fi
+
+mkdir -p $iso_images_dir
+
+cd $iso_images_dir
+
+set -e
+if [[ ! -f ./$installer_iso_filename ]]; then
+    echo "Downloading Ubuntu installer iso image..."
+    wget http://cdimage.ubuntu.com/releases/18.10/release/$installer_iso_filename
+fi
+if [[ ! -f ./$md5sums_local_filename ]]; then
+    echo "Downloading Ubuntu installer MD5SUMS file..."
+    wget http://cdimage.ubuntu.com/releases/18.10/release/MD5SUMS -O ./$md5sums_local_filename
+fi
+set +e
+
+echo "Checking installer iso image integrity (md5 sum)..."
+expected_installer_md5=$(cat $md5sums_local_filename | grep "[*]$installer_iso_filename" | sed -E 's/[ \t]+[*].*//')
+echo "Expecting md5 sum of $expected_installer_md5"
+actual_installer_md5=$(md5sum ./$installer_iso_filename | sed -E 's/[ \t].*//')
+echo "Actual md5 sum is    $actual_installer_md5"
+
+if [[ $expected_installer_md5 == $actual_installer_md5 ]]; then
+    echo "sums match :)"
+else
+    echo "Integrity check failed because the md5 sum did not match!" 1>&2
+    exit 1
+fi
+
+vm_cpu_count=$(( $macos_logical_cpu_count / 2 ))
+
+vm_ram_mb=$(echo "$host_os_ram_gb * 3 * 1024 / 8" | bc -l)
+vm_ram_mb=$(echo $vm_ram_mb | sed -E 's/[.][0-9]*//')
+
+echo $username
+echo $net_domain
+echo $vm_cpu_count
+echo $vm_ram_mb

@@ -1,0 +1,76 @@
+#!/bin/bash
+
+if [[ $addnl_vm_ubuntu_packages == none ]]; then
+    addnl_vm_ubuntu_packages=()
+else
+    eval "addnl_vm_ubuntu_packages=($4)"
+fi
+
+set -e
+set -x
+cd $(dirname $BASH_SOURCE)
+:
+:
+: "Lock the root account password, so must use sudo to become root."
+sudo usermod -L root
+:
+:
+if grep -q "^${hostonly_host_ip//./[.]}\b.*\b${host_hostname}\b" /etc/hosts; then
+    : "Host system entry exists in /etc/hosts, so not re-appending"
+else
+    : "Host system to /etc/hosts file"
+    sudo bash -c "echo -e \"$hostonly_host_ip\t$host_fqdn $host_hostname\" >> /etc/hosts"
+fi
+:
+:
+if grep -q '\s*DenyUsers\b.*\broot\b' /etc/ssh/sshd_config; then
+    : "Login as root via ssh already denied, so not modifying /ec/ss/ssh_config"
+else
+    sudo bash -c "cat <<EOF >> /etc/ssh/sshd_config
+
+# Don't allow ssh login as root user
+DenyUsers root
+EOF"
+    :
+fi
+:
+:
+: "Install additional Ubuntu packages"
+sudo apt-get install -y \
+    snapd zfsutils-linux git vim golang-go debootstrap rsync gpg squashfs-tools \
+    "${addnl_vm_ubuntu_packages[@]}"
+:
+:
+: "Install the lxd snap package"
+sudo snap install lxd
+sudo usermod -aG lxd $USER
+:
+:
+: "Install the LXC distrobuilder"
+: "It is normal for the 'go get...' to fail with 'no Go files in...'"
+if [[ ! -f $HOME/go/src/github.com/lxc/distrobuilder/Makefile ]]; then
+    go get -d -v github.com/lxc/distrobuilder || true
+fi
+if [[ ! -f $HOME/go/bin/distrobuilder ]]; then
+    ( cd $HOME/go/src/github.com/lxc/distrobuilder; make )
+fi
+:
+if [[ ! :$PATH: =~ :$HOME/go/bin: ]]; then
+    cp $HOME/.bashrc $HOME/new_bashrc
+    cat <<EOF > $HOME/new_bashrc
+# Add ~/go/bin to the execution path
+PATH=$PATH:$HOME/go/bin
+
+EOF
+    cat $HOME/.bashrc >> $HOME/new_bashrc
+    mv $HOME/new_bashrc $HOME/.bashrc
+fi
+:
+mkdir -p $HOME/lxc-distro-images
+:
+:
+: "Create LXD init preseed file from template"
+sed "s/__vm_ip_address__/$hostonly_vm_ip/" lxd-init-template.yaml > lxd-init.yaml
+:
+set +x
+set +e

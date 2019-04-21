@@ -1,0 +1,32 @@
+#!/bin/bash
+
+set -e
+set -x
+cd $(dirname $BASH_SOURCE)
+:
+:
+if [[ $(./check-lxd-initialized) == True ]]; then
+    : "LXD was already initialized, so not reinitializing"
+else
+    : "Initialize LXD"
+    lxd init --preseed < lxd-init.yaml
+fi
+:
+:
+if lxc remote list | grep -q ubuntu-server; then
+    : "Remote for Ubuntu server images already added, so not adding it again."
+else
+    : "Add remote for Ubuntu server images since not present by default."
+    lxc remote add ubuntu-server https://cloud-images.ubuntu.com/server/releases --protocol simplestreams
+fi
+:
+:
+if lxc profile device list default | grep -q eth1; then
+    : "Second adapter already added to LXC default profile, so not adding it again."
+else
+    : "Add second adapter to LXC default profile, bridged to VM's br0."
+    lxc profile device add default eth1 nic nictype=bridged name=eth1 parent=br0
+fi
+:
+set +x
+set +e

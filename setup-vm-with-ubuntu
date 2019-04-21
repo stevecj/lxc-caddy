@@ -1,0 +1,458 @@
+#!/bin/bash
+
+scriptdir=$(dirname $BASH_SOURCE)
+settings_script=$1
+source $scriptdir/lib/_define_functions.bash
+source $scriptdir/lib/_load_settings.bash
+
+
+echo ''
+
+if VBoxManage list runningvms | grep -qe "^\"$vm_name\""; then
+
+    cat <<EOF
+There is already a virtual machine named $vm_name running, so the
+the Ubuntu installation is presumably either already underway or
+completed.
+
+If you need to re-do any of the setup performed by this script
+differently, and you have not done yet done any additional setup,
+then it's probably easiest to start from scratch: stop the VM,
+remove it, and selecting the "Delete all files" option.  After
+that, you can run this script again with any desired configura-
+tion changes.
+
+EOF
+    exit
+
+fi
+
+
+cat <<EOF
+Checking whether patch for https://www.virtualbox.org/ticket/18411
+is needed...
+
+EOF
+
+ubuntu_preseed_config_path="$virtualbox_mac_app_path/Contents/MacOS/UnattendedTemplates/ubuntu_preseed.cfg"
+is_vbox_patch_needed=
+if [[ -f "$ubuntu_preseed_config_path" ]]; then
+
+    patch --dry-run "$ubuntu_preseed_config_path" "$scriptdir/lib/ubuntu_preseed_cfg_fix.patch" > /dev/null 2>&1
+    case $? in
+    0)
+        is_vbox_patch_needed=1
+        ;;
+    1)
+        cat <<EOF
+The patch to ubuntu_preseed.cfg cannot be applied, so either it
+was already applied, or we're presumably usng a newer version of
+VirtualBox in which the problem has been fixed.
+
+EOF
+        ;;
+    2)
+        cat <<EOF
+The patch command experienced "serious trouble" trying to perform
+a dry run of applying the patch, so we don't know what went wrong
+or whether the patch needs to be applied or not.
+
+EOF
+        read -p "Press Enter to continue or Ctrl+C to abort: "
+        ;;
+    esac
+
+else
+
+    cat <<EOF
+There is no file at
+$ubuntu_preseed_config_path
+to patch, so hopefully, we're using a newer VirtualBox version
+that uses something different and doesn't need the patch.
+
+EOF
+    :
+fi
+
+if [[ -n $is_vbox_patch_needed ]]; then
+
+    cat <<EOF
+If you continue, a patch will be applied to fix the problem
+described at https://www.virtualbox.org/ticket/18411.  If that
+is not patched, then the automated setup of an Ubuntu
+virtual machine will not finish properly.
+
+EOF
+    read -p "Press Enter to continue or Ctrl+C to abort: "
+    echo ''
+
+    cat <<EOF
+If prompted for a password below, enter your Mac user password
+to confirm root access for applying the patch.
+EOF
+    sudo patch "$ubuntu_preseed_config_path" "$scriptdir/lib/ubuntu_preseed_cfg_fix.patch"
+
+fi
+echo ''
+
+
+hostonly_netname=
+
+cat <<EOF
+Checking for an existing VirtualBox host-only network/interface
+with a host ip address of $hostonly_host_ip...
+EOF
+
+determine_existing_hostonly_net_info
+
+if [[ -n $found_net_name ]]; then
+
+    echo -e "Found matching network/adapter $found_net_name.\n"
+    hostonly_netname=$found_net_name
+
+else
+
+    cat <<EOF
+No VirtualBox host-only network/adapter with host IP address of
+$hostonly_host_ip was found.
+Did you run setup-vb-network first, and was it successful?
+
+EOF
+    exit 1
+
+fi
+
+
+determine_installer_iso_filename
+
+cat <<EOF
+Checking for an existing $installer_iso_filename image
+file to install from...
+EOF
+
+if [[ -f "$iso_images_dir/$installer_iso_filename" ]]; then
+
+    echo -e "Image found at $iso_images_dir as expected.\n"
+
+else
+
+    cat <<EOF
+No $installer_iso_filename file was found in the
+$iso_images_dir directory.
+Did you run get-ubuntu-installer-iso-image first, and was it
+successful?
+
+EOF
+    exit 1
+
+fi
+
+
+echo "Checking for existing $vm_name virtual machine..."
+
+if VBoxManage list vms | grep -q '^"lxc-caddy"'; then
+
+    cat <<EOF
+Found existing $vm_name virtual machine, so continuing
+setup of that.
+
+EOF
+    :
+
+else
+
+    echo "Creating new $vm_name virtual machine..."
+    VBoxManage createvm \
+      --name $vm_name \
+      --ostype "Ubuntu_64" \
+      --register \
+      || exit 1
+    echo ''
+
+fi
+
+
+echo "Configuring the VM's base memory size, CPU count, etc. ..."
+VBoxManage modifyvm $vm_name \
+    --cpus $vm_processor_count \
+    --memory $vm_base_memory_size_MiB \
+    || exit 1
+echo -e "Configured.\n"
+
+
+echo "Confirming Virtual Machines directory path..."
+
+if [[ -f "$virtual_machines_dir/$vm_name/$vm_name.vbox" ]]; then
+
+    cat <<EOF
+Found $vm_name/$vm_name.vbox under $virtual_machines_dir/
+as expected.
+
+EOF
+    :
+
+else
+
+    cat <<EOF
+The $virtual_machines_dir/ path does not seem to be
+where VirtualBox is configured to store virtual machine
+files since there is no $vm_name/$vm_name.vbox
+file under $virtual_machines_dir/ .
+
+EOF
+    exit 1
+
+fi
+
+
+echo "Checking whether IDE controller is already added to VM..."
+
+if VBoxManage showvminfo $vm_name | grep -q  "Storage Controller Name .*: *IDE$"; then
+
+    echo -e "IDE controller already exists for VM.\n"
+
+else
+
+    echo "Adding IDE controller..."
+    VBoxManage storagectl $vm_name --name "IDE" --add ide \
+        || exit 1
+    echo -e "Added.\n"
+
+fi
+
+
+echo "Checking whether SATA controller is already added to VM..."
+
+if VBoxManage showvminfo $vm_name | grep -q  "Storage Controller Name .*: *SATA$"; then
+
+    echo -e "SATA controller already exists for VM.\n"
+
+else
+
+    echo "Adding SATA controller..."
+    VBoxManage storagectl $vm_name --name "SATA" --add sata \
+        || exit 1
+    echo -e "Added.\n"
+
+fi
+
+
+echo "Checking whether virtual DVD drive already attached to VM..."
+if VBoxManage showvminfo $vm_name | grep -q '^IDE (0, 0): '; then
+
+    echo -e "The virtual DVD drive is already attached.\n"
+
+else
+
+    echo "Attaching virtual DVD drive to VM..."
+    VBoxManage storageattach $vm_name \
+        --storagectl "IDE" \
+        --port 0 \
+        --device 0 \
+        --type dvddrive \
+        --medium emptydrive \
+        || exit 1
+    echo -e "Attached.\n"
+
+fi
+
+
+echo "Checking for existence of root virtual disk for VM..."
+
+if VBoxManage showmediuminfo disk "$virtual_machines_dir/$vm_name/$vm_name.vdi" > /dev/null 2>&1; then
+
+    echo -e "The root virtual disk already exists.\n"
+
+else
+
+    echo "Creating the root virtual disk for the VM..."
+    VBoxManage createmedium disk \
+        --filename "$virtual_machines_dir/$vm_name/$vm_name.vdi" \
+        --variant Fixed \
+        --size $root_virtual_disk_MiB \
+        || exit 1
+    echo -e "Created.\n"
+
+fi
+
+
+echo "Checking whether root virtual disk is attached to VM..."
+
+if VBoxManage showmediuminfo disk "$virtual_machines_dir/$vm_name/$vm_name.vdi" | grep -E -q "^In use by VMs:.*\\b$vm_name\\b"
+then
+
+    echo -e "The root virtual disk is already attached.\n"
+
+else
+
+    echo "Attaching root virtual disk to VM..."
+    VBoxManage storageattach $vm_name \
+        --storagectl "SATA" \
+        --port 0 \
+        --device 0 \
+        --type hdd \
+        --medium "$virtual_machines_dir/$vm_name/$vm_name.vdi" \
+        || exit 1
+    echo -e "Attached.\n"
+
+fi
+
+
+echo "Checking for existence of containers virtual disk for VM..."
+
+if VBoxManage showmediuminfo disk "$virtual_machines_dir/$vm_name/$vm_name-containers.vdi" > /dev/null 2>&1
+then
+
+    echo -e "The containers virtual disk already exists.\n"
+
+else
+
+    echo "Creating the containers virtual disk for the VM..."
+    VBoxManage createmedium disk \
+        --filename "$virtual_machines_dir/$vm_name/$vm_name-containers.vdi" \
+        --variant Fixed \
+        --size $containers_virtual_disk_MiB \
+        || exit 1
+    echo ''
+
+fi
+
+
+echo "Checking whether containers virtual disk is attached to VM..."
+
+if VBoxManage showmediuminfo disk "$virtual_machines_dir/$vm_name/$vm_name-containers.vdi" | grep -E -q "^In use by VMs:.*\\b$vm_name\\b"
+then
+
+    echo -e "The containers virtual disk is already attached.\n"
+
+else
+
+    echo "Attaching containers virtual disk to VM..."
+    VBoxManage storageattach $vm_name \
+        --storagectl "SATA" \
+        --port 1 \
+        --device 0 \
+        --type hdd \
+        --medium "$virtual_machines_dir/$vm_name/$vm_name-containers.vdi" \
+        || exit 1
+    echo -e "Attached.\n"
+
+fi
+
+
+cat <<EOF
+Getting name of host-only network with host address of
+$hostonly_host_ip...
+EOF
+
+determine_existing_hostonly_net_info
+
+if [[ -n $found_net_name ]]; then
+    cat <<EOF
+Found an existing VirtualBox host-only network/interface with
+host address of $hostonly_host_ip.  Checking properties...
+
+EOF
+    hostonly_netname=$found_net_name
+    echo -e "Found network/interface $hostonly_netname\n"
+
+else
+
+    exit 1
+
+fi
+
+echo "Configuring the VM's second network adapter..."
+set -e
+VBoxManage modifyvm $vm_name \
+    --nic2 hostonly \
+    --hostonlyadapter2 $hostonly_netname \
+    --nictype1 virtio \
+    --nicpromisc2 allow-all 
+set +e
+
+
+echo "Checking whether data already written to root virtual disk..."
+
+if hexdump -s0x200000 -n16 -x "$virtual_machines_dir/$vm_name/$vm_name.vdi" | grep -qie "^0*200000 [ 0]*[^ 0]"
+then
+
+    cat <<EOF
+The root virtual disk has data, so Ubuntu installation was
+apparently already performed.
+
+EOF
+    :
+
+else
+
+    set -x
+    VBoxManage unattended install $vm_name \
+        --iso "$iso_images_dir/$installer_iso_filename" \
+        --user $USER \
+        --full-user-name "$(id -F)" \
+        --password changeme \
+        --hostname $vm_hostname.$vm_net_domain \
+        --install-additions \
+        --post-install-command "
+chroot /target usermod -aG sudo $USER 2>&1 | tee -a \"\${MY_LOGFILE}\"
+
+chmod +w /target/etc/sudoers 2>&1 | tee -a \"\${MY_LOGFILE}\"
+sed -i -E 's/^(%sudo\\s.* )(ALL)\$/\\1NOPASSWD:\\2/' /target/etc/sudoers 2>&1 | tee -a \"\${MY_LOGFILE}\"
+chmod -w /target/etc/sudoers 2>&1 | tee -a \"\${MY_LOGFILE}\"
+
+chroot /target apt-get install -y openssh-server 2>&1 | tee -a \"\${MY_LOGFILE}\"
+
+mkdir -p /target/home/$USER/.ssh 2>&1 | tee -a \"\${MY_LOGFILE}\"
+echo '$host_ssh_public_key' >> /target/home/$USER/.ssh/authorized_keys
+chroot /target chown -R $USER:$USER /home/$USER/.ssh 2>&1 | tee -a \"\${MY_LOGFILE}\"
+chmod 700 /target/home/$USER/.ssh 2>&1 | tee -a \"\${MY_LOGFILE}\"
+chmod 600 /target/home/$USER/.ssh/authorized_keys 2>&1 | tee -a \"\${MY_LOGFILE}\"
+
+net1name=\$(cat /proc/net/dev | grep -o '^e[tn]\\w*' | sort | sed -n '1 p')
+net2name=\$(cat /proc/net/dev | grep -o '^e[tn]\\w*' | sort | sed -n '2 p')
+netplanfile=\$(chroot /target ls /etc/netplan/ | grep '[.]yaml$')
+
+chroot /target python3 -c \"
+import yaml
+
+with open('/etc/netplan/\$netplanfile') as f:
+    data = yaml.safe_load(f)
+
+data['network']['ethernets']['\$net1name'] = {
+    'dhcp4': 'yes',
+    'dhcp6': 'yes',
+}
+data['network']['ethernets']['\$net2name'] = {
+    'dhcp4': 'no',
+    'dhcp6': 'no',
+}
+data['network']['bridges'] = {
+    'br0': {
+        'interfaces': ['\$net2name'],
+        'dhcp4': 'no',
+        'dhcp6': 'no',
+        'addresses': ['$hostonly_vm_ip_cidr'],
+        'parameters': {'stp': False, 'forward-delay': 0},
+    }
+}
+
+with open('/etc/netplan/\$netplanfile', 'w') as f:
+    f.write(yaml.dump(data))
+\" 2>&1 | tee -a \"\${MY_LOGFILE}\"
+    " \
+        || exit 1
+    set -x
+
+fi
+
+
+cat <<EOF
+Starting the virtual machine with gui to complete the Ubuntu
+installation.  When the installation has completed, you should
+see an "lxc-caddy login: " prompt in the virtual machine's GUI
+window.
+
+EOF
+
+VBoxManage startvm $vm_name --type gui

@@ -1,0 +1,80 @@
+#!/bin/bash
+
+scriptdir=$(dirname $BASH_SOURCE)
+settings_script=$1
+source $scriptdir/lib/_define_functions.bash
+source $scriptdir/lib/_load_settings.bash
+
+
+echo ''
+
+set -e
+
+echo "Appending VM lookup to host's /etc/hosts file..."
+
+if grep -q "^${hostonly_vm_ip//./[.]}\b.*\b${vm_hostname}\b" /etc/hosts; then
+
+    echo -e "Was already appended so did not re-append\n"
+
+else
+
+    cat <<EOF
+If prompted, enter your MacOS user password for permission to
+modify /etc/hosts...
+EOF
+    sudo bash -c "echo -e \"$hostonly_vm_ip\t$vm_name.$vm_net_domain $vm_name\" >> /etc/hosts"
+    echo -e "\nAppended\n"
+
+fi
+
+
+echo "Removing any old ssh known host entries for VM..."
+
+sed -i -e "/^${hostonly_vm_ip//./[.]}[[:space:]]/ d" $HOME/.ssh/known_hosts
+sed -i -e "/^$vm_hostname/ d" $HOME/.ssh/known_hosts
+sed -i -e "/^$vm_hostname[.]${vm_net_domain//./[.]}[[:space:]]/ d" $HOME/.ssh/known_hosts
+
+echo -e "Done\n"
+
+
+echo "Accepting VM's ssh host key..."
+
+ssh -oStrictHostKeyChecking=no $hostonly_vm_ip /bin/true
+ssh -oStrictHostKeyChecking=no $vm_hostname /bin/true
+ssh -oStrictHostKeyChecking=no $vm_hostname.$vm_net_domain /bin/true
+
+echo -e "Done\n"
+
+
+echo "Copying VM-side epilogue scripts, etc. to VM..."
+
+ssh $hostonly_vm_ip mkdir -p setup-epilogue
+scp $scriptdir/lib/vm-side-setup-epilogue* $hostonly_vm_ip:setup-epilogue/
+scp $scriptdir/lib/lxd-init-template.yaml $hostonly_vm_ip:setup-epilogue/
+scp $scriptdir/lib/check-lxd-initialized $hostonly_vm_ip:setup-epilogue/
+
+echo -e "Copied\n"
+
+
+echo "Running VM-side epilogue script, part 1 in VM..."
+
+ssh $hostonly_vm_ip /bin/bash -lc "
+    hostonly_host_ip='$hostonly_host_ip' \
+    host_hostname='$(hostname -s)' \
+    host_fqdn='$(hostname -f)' \
+    hostonly_vm_ip=$hostonly_vm_ip \
+    addnl_vm_ubuntu_packages='$addnl_vm_ubuntu_packages' \
+    use_lxd_latest_or_lts=$use_lxd_latest_or_lts \
+    \$HOME/setup-epilogue/vm-side-setup-epilogue-pt1
+"
+
+echo -e "Finished running VM-side epilogue script, part 1\n"
+
+
+echo "Running VM-side epilogue script, part 2 in VM..."
+
+ssh $hostonly_vm_ip /bin/bash -lc "setup-epilogue/vm-side-setup-epilogue-pt2"
+
+echo -e "Finished running VM-side epilogue script, part 2\n"
+
+set +e

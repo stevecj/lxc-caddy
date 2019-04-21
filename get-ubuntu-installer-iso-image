@@ -1,0 +1,40 @@
+#!/bin/bash
+
+scriptdir=$(dirname $BASH_SOURCE)
+settings_script=$1
+source $scriptdir/lib/_define_functions.bash
+source $scriptdir/lib/_load_settings.bash
+
+
+determine_installer_iso_filename
+
+md5sums_local_filename=ubuntu-server-$vm_ubuntu_version-MD5SUMS
+
+
+mkdir -p $iso_images_dir
+
+cd $iso_images_dir
+
+set -e
+if [[ ! -f ./$installer_iso_filename ]]; then
+    echo "Downloading Ubuntu installer iso image..."
+    wget http://cdimage.ubuntu.com/releases/18.10/release/$installer_iso_filename
+fi
+if [[ ! -f ./$md5sums_local_filename ]]; then
+    echo "Downloading Ubuntu installer MD5SUMS file..."
+    wget http://cdimage.ubuntu.com/releases/18.10/release/MD5SUMS -O ./$md5sums_local_filename
+fi
+set +e
+
+echo "Checking installer iso image integrity (md5 sum)..."
+expected_installer_md5=$(cat $md5sums_local_filename | grep "[*]$installer_iso_filename" | sed -E 's/[ \t]+[*].*//')
+echo "Expecting md5 sum of $expected_installer_md5"
+actual_installer_md5=$(md5sum ./$installer_iso_filename | sed -E 's/[ \t].*//')
+echo "Actual md5 sum is    $actual_installer_md5"
+
+if [[ $expected_installer_md5 == $actual_installer_md5 ]]; then
+    echo "The md5 sum matches. :)"
+else
+    echo "Integrity check failed because the md5 sum did not match!" 1>&2
+    exit 1
+fi
