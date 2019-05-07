@@ -5,15 +5,23 @@ settings_script=$1
 source $scriptdir/lib/_define_functions.bash
 source $scriptdir/lib/_load_settings.bash
 
+if which md5sum > /dev/null; then
+    md5cmd=md5sum
+    md5clean='s/[ \t].*//'
+else
+    md5cmd=md5
+    md5clean='s/[^=]*= *//'
+fi
+
 
 determine_installer_iso_filename
 
 md5sums_local_filename=ubuntu-server-$vm_ubuntu_version-MD5SUMS
 
 
-mkdir -p $iso_images_dir
+mkdir -p "$iso_images_dir"
 
-cd $iso_images_dir
+cd "$iso_images_dir"
 
 set -e
 if [[ ! -f ./$installer_iso_filename ]]; then
@@ -29,7 +37,7 @@ set +e
 echo "Checking installer iso image integrity (md5 sum)..."
 expected_installer_md5=$(cat $md5sums_local_filename | grep "[*]$installer_iso_filename" | sed -E 's/[ \t]+[*].*//')
 echo "Expecting md5 sum of $expected_installer_md5"
-actual_installer_md5=$(md5sum ./$installer_iso_filename | sed -E 's/[ \t].*//')
+actual_installer_md5=$($md5cmd ./$installer_iso_filename | sed -E "$md5clean")
 echo "Actual md5 sum is    $actual_installer_md5"
 
 if [[ $expected_installer_md5 == $actual_installer_md5 ]]; then
