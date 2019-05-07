@@ -5,6 +5,13 @@ set -x
 cd $(dirname $BASH_SOURCE)
 :
 :
+: "Work around snap path bug if needed."
+if [[ ! :${PATH}: =~ :/snap/bin: ]]; then
+    echo -e '\nPATH=$PATH:/snap/bin' >> ~/.bashrc
+    export PATH=$PATH:/snap/bin
+fi
+:
+:
 if [[ $(./check-lxd-initialized) == True ]]; then
     : "LXD was already initialized, so not reinitializing"
 else
@@ -17,6 +24,7 @@ if lxc remote list | grep -q ubuntu-server; then
     : "Remote for Ubuntu server images already added, so not adding it again."
 else
     : "Add remote for Ubuntu server images since not present by default."
+    : "Using US-based servercentral.com/ubuntu-cloud-images mirror for cloud-images.ubuntu.com."
     lxc remote add ubuntu-server https://cloud-images.ubuntu.com/server/releases --protocol simplestreams
 fi
 :
