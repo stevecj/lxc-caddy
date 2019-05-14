@@ -1,5 +1,6 @@
 # lxc-caddy
-Creates a VirtualBox VM for hosting LXC/LXD containers with minimal fuss
+On MacOS or OS X, with minimal fuss, creates a VirtualBox VM for
+hosting LXC/LXD containers
 
 Minimal instructions (will flesh this out in the future):
 
