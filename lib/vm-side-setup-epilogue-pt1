@@ -66,6 +66,10 @@ EOF
     mv $HOME/new_bashrc $HOME/.bashrc
 fi
 :
+mkdir -p $HOME/lxc-distro-image-configs
+if [[ ! -d $HOME/lxc-distro-image-configs/examples ]]; then
+    ln -s $HOME/go/src/github.com/lxc/distrobuilder/doc/examples $HOME/lxc-distro-image-configs/
+fi
 mkdir -p $HOME/lxc-distro-images
 :
 :
